@@ -1,6 +1,6 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    Исправленная версия с работающим GUI и захватом
+    Уменьшенное меню
 ]]
 
 local Players = game:GetService("Players")
@@ -8,13 +8,12 @@ local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
-local UserInputService = game:GetService("UserInputService")
 
 local _Ins = Instance.new
 local _VTR = Vector3.new
 local _CF = CFrame.new
 
--- Создание инструмента
+-- Инструмент
 local Tool = _Ins("Tool")
 Tool.Name = "Telekinesis V6"
 Tool.Parent = LocalPlayer.Backpack
@@ -39,7 +38,7 @@ Sound.Volume = 0.3
 Sound:Play()
 
 -- Таблица захваченных объектов
-local heldObjects = {}  -- obj -> {bodyPos, bodyGyro, offset, frozenBP, frozenBox, isFrozen, selectionBox}
+local heldObjects = {}
 
 -- Создание рамки подсветки
 local function createSelectionBox(obj, color)
@@ -55,8 +54,6 @@ end
 local function grabObject(target)
     if not target or target.Anchored then return false end
     if heldObjects[target] then return false end
-
-    -- Проверяем, что объект не является частью персонажа
     local char = LocalPlayer.Character
     if char and target:IsDescendantOf(char) then return false end
 
@@ -104,7 +101,7 @@ local function releaseAll()
     heldObjects = {}
 end
 
--- Освободить конкретный (для внутреннего использования)
+-- Освободить конкретный
 local function releaseObject(obj)
     local data = heldObjects[obj]
     if not data then return end
@@ -116,7 +113,7 @@ local function releaseObject(obj)
     heldObjects[obj] = nil
 end
 
--- Обновление позиции всех объектов (вызывается каждый кадр)
+-- Обновление позиции всех объектов
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -134,7 +131,6 @@ local function updateAllObjects()
                     data.bodyPos.position = root.Position + data.offset
                 end
             end
-            -- Сохраняем ориентацию (если не заморожен)
             if data.bodyGyro and not data.isFrozen then
                 data.bodyGyro.cframe = obj.CFrame
             end
@@ -163,6 +159,18 @@ local function toggleFreezeAll()
             if data.frozenBP then data.frozenBP:Destroy() data.frozenBP = nil end
             if data.frozenBox then data.frozenBox:Destroy() data.frozenBox = nil end
             data.isFrozen = false
+            if not data.bodyPos then
+                local bp = _Ins("BodyPosition")
+                bp.maxForce = _VTR(math.huge, math.huge, math.huge)
+                bp.P = 3000
+                bp.D = 500
+                bp.Parent = obj
+                data.bodyPos = bp
+            end
+            local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                data.offset = obj.Position - root.Position
+            end
         else
             -- Заморозка
             if data.bodyPos then data.bodyPos:Destroy() data.bodyPos = nil end
@@ -180,7 +188,7 @@ local function toggleFreezeAll()
     end
 end
 
--- Включение/выключение вращения
+-- Вращение (включить/выключить)
 local function toggleSpinAll()
     if next(heldObjects) == nil then return end
     local hasSpin = false
@@ -193,7 +201,6 @@ local function toggleSpinAll()
 
     for obj, data in pairs(heldObjects) do
         if hasSpin then
-            -- Выключаем вращение
             if data.bodyGyro then data.bodyGyro:Destroy() end
             local bg = _Ins("BodyGyro")
             bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
@@ -203,7 +210,6 @@ local function toggleSpinAll()
             bg.Parent = obj
             data.bodyGyro = bg
         else
-            -- Включаем вращение (поворот на 45° по Y)
             if data.bodyGyro then data.bodyGyro:Destroy() end
             local bg = _Ins("BodyGyro")
             bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
@@ -216,7 +222,7 @@ local function toggleSpinAll()
     end
 end
 
--- Поднять все объекты (импульс вверх)
+-- Поднять (импульс вверх)
 local function liftAll()
     for obj, data in pairs(heldObjects) do
         local bv = _Ins("BodyVelocity")
@@ -227,12 +233,12 @@ local function liftAll()
     end
 end
 
--- Бросок (отодвинуть на 90 единиц вперёд)
+-- Бросок (отодвинуть на 90)
 local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
--- Кнопочные функции движения
+-- Кнопочные функции
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -242,8 +248,7 @@ local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
 
--- ----------------------------------------------------------------------
--- GUI (переработан с использованием ScrollingFrame для гарантированного отображения)
+-- ============= УМЕНЬШЕННОЕ GUI =============
 local ScreenGui = _Ins("ScreenGui")
 ScreenGui.Name = "TelekinesisGUI"
 ScreenGui.ResetOnSpawn = false
@@ -255,8 +260,8 @@ MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
-MainFrame.Position = UDim2.new(1, -250, 0.5, -220)
-MainFrame.Size = UDim2.new(0, 240, 0, 440)
+MainFrame.Position = UDim2.new(1, -150, 0.5, -130)  -- сместили вправо-вверх
+MainFrame.Size = UDim2.new(0, 140, 0, 260)          -- уменьшили в ~2 раза
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -264,56 +269,54 @@ local Title = _Ins("TextLabel")
 Title.Parent = MainFrame
 Title.BackgroundColor3 = Color3.fromRGB(30,30,30)
 Title.BorderSizePixel = 0
-Title.Size = UDim2.new(1,0,0,30)
+Title.Size = UDim2.new(1,0,0,20)      -- высота 20 вместо 30
 Title.Font = Enum.Font.Code
 Title.Text = "TELEKINESIS V6"
 Title.TextColor3 = Color3.fromRGB(255,255,255)
-Title.TextSize = 14
+Title.TextSize = 10                   -- шрифт меньше
 
 local ScrollFrame = _Ins("ScrollingFrame")
 ScrollFrame.Parent = MainFrame
 ScrollFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 ScrollFrame.BorderSizePixel = 0
-ScrollFrame.Position = UDim2.new(0,0,0,30)
-ScrollFrame.Size = UDim2.new(1,0,1,-30)
-ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.Position = UDim2.new(0,0,0,20)      -- сдвиг на 20
+ScrollFrame.Size = UDim2.new(1,0,1,-20)         -- остальное место
+ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80,80,80)
 
 local UIListLayout = _Ins("UIListLayout")
 UIListLayout.Parent = ScrollFrame
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 4)
+UIListLayout.Padding = UDim.new(0, 2)           -- уменьшили отступ
 
--- Автоматическое обновление CanvasSize
 UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 5)
 end)
 
 local UIPadding = _Ins("UIPadding")
 UIPadding.Parent = ScrollFrame
-UIPadding.PaddingTop = UDim.new(0, 5)
-UIPadding.PaddingLeft = UDim.new(0, 8)
-UIPadding.PaddingRight = UDim.new(0, 8)
+UIPadding.PaddingTop = UDim.new(0, 3)
+UIPadding.PaddingLeft = UDim.new(0, 5)
+UIPadding.PaddingRight = UDim.new(0, 5)
 
--- Функция создания кнопки
 local function createButton(text, callback, order)
     local btn = _Ins("TextButton")
     btn.Parent = ScrollFrame
     btn.BackgroundColor3 = Color3.fromRGB(45,45,45)
     btn.BorderColor3 = Color3.fromRGB(70,70,70)
     btn.BorderSizePixel = 1
-    btn.Size = UDim2.new(1, -10, 0, 35)
+    btn.Size = UDim2.new(1, -6, 0, 22)           -- высота кнопки 22
     btn.Font = Enum.Font.Code
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 13
+    btn.TextSize = 10                            -- шрифт меньше
     btn.LayoutOrder = order
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
--- Создание кнопок
-createButton("Захватить (луч)", function()
+-- Создание кнопок (все те же)
+createButton("Захват (луч)", function()
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local origin = cam.CFrame.p
@@ -344,10 +347,9 @@ createButton("Вращать", toggleSpinAll, 12)
 createButton("Поднять", liftAll, 13)
 createButton("Бросок", throwAll, 14)
 
--- Захват по клику мыши (наведение на объект)
+-- Захват по клику мыши
 local function onMouseClick(target)
     if target and not target.Anchored then
-        -- Проверяем, что это не часть персонажа
         local char = LocalPlayer.Character
         if char and target:IsDescendantOf(char) then return end
         grabObject(target)
@@ -376,10 +378,8 @@ end)
 
 Tool.Unequipped:Connect(releaseAll)
 
--- Обновление позиции каждый кадр
 RunService.RenderStepped:Connect(updateAllObjects)
 
--- Очистка при респавне
 LocalPlayer.CharacterAdded:Connect(function()
     releaseAll()
 end)
