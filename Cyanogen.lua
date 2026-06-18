@@ -1,6 +1,6 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    Исправленная и рабочая версия
+    Исправленная версия с работающим GUI и захватом
 ]]
 
 local Players = game:GetService("Players")
@@ -8,6 +8,7 @@ local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
+local UserInputService = game:GetService("UserInputService")
 
 local _Ins = Instance.new
 local _VTR = Vector3.new
@@ -55,7 +56,11 @@ local function grabObject(target)
     if not target or target.Anchored then return false end
     if heldObjects[target] then return false end
 
-    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    -- Проверяем, что объект не является частью персонажа
+    local char = LocalPlayer.Character
+    if char and target:IsDescendantOf(char) then return false end
+
+    local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
 
     local offset = target.Position - root.Position
@@ -237,7 +242,8 @@ local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
 
--- GUI
+-- ----------------------------------------------------------------------
+-- GUI (переработан с использованием ScrollingFrame для гарантированного отображения)
 local ScreenGui = _Ins("ScreenGui")
 ScreenGui.Name = "TelekinesisGUI"
 ScreenGui.ResetOnSpawn = false
@@ -249,8 +255,8 @@ MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
-MainFrame.Position = UDim2.new(1, -240, 0.5, -220)
-MainFrame.Size = UDim2.new(0, 230, 0, 440)
+MainFrame.Position = UDim2.new(1, -250, 0.5, -220)
+MainFrame.Size = UDim2.new(0, 240, 0, 440)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -264,38 +270,50 @@ Title.Text = "TELEKINESIS V6"
 Title.TextColor3 = Color3.fromRGB(255,255,255)
 Title.TextSize = 14
 
-local ControlsFrame = _Ins("Frame")
-ControlsFrame.Parent = MainFrame
-ControlsFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-ControlsFrame.BorderSizePixel = 0
-ControlsFrame.Position = UDim2.new(0,0,0,30)
-ControlsFrame.Size = UDim2.new(1,0,1,-30)
+local ScrollFrame = _Ins("ScrollingFrame")
+ScrollFrame.Parent = MainFrame
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.Position = UDim2.new(0,0,0,30)
+ScrollFrame.Size = UDim2.new(1,0,1,-30)
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80,80,80)
 
-local UIGrid = _Ins("UIGridLayout")
-UIGrid.Parent = ControlsFrame
-UIGrid.SortOrder = Enum.SortOrder.LayoutOrder
-UIGrid.CellPadding = UDim.new(0, 4)
-UIGrid.CellSize = UDim2.new(0, 65, 0, 35)
-UIGrid.FillDirection = Enum.FillDirection.Vertical
-UIGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+local UIListLayout = _Ins("UIListLayout")
+UIListLayout.Parent = ScrollFrame
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 4)
 
+-- Автоматическое обновление CanvasSize
+UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+local UIPadding = _Ins("UIPadding")
+UIPadding.Parent = ScrollFrame
+UIPadding.PaddingTop = UDim.new(0, 5)
+UIPadding.PaddingLeft = UDim.new(0, 8)
+UIPadding.PaddingRight = UDim.new(0, 8)
+
+-- Функция создания кнопки
 local function createButton(text, callback, order)
     local btn = _Ins("TextButton")
-    btn.Parent = ControlsFrame
+    btn.Parent = ScrollFrame
     btn.BackgroundColor3 = Color3.fromRGB(45,45,45)
     btn.BorderColor3 = Color3.fromRGB(70,70,70)
     btn.BorderSizePixel = 1
+    btn.Size = UDim2.new(1, -10, 0, 35)
     btn.Font = Enum.Font.Code
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 11
+    btn.TextSize = 13
     btn.LayoutOrder = order
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
 -- Создание кнопок
-createButton("Захватить", function()
+createButton("Захватить (луч)", function()
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local origin = cam.CFrame.p
@@ -326,9 +344,12 @@ createButton("Вращать", toggleSpinAll, 12)
 createButton("Поднять", liftAll, 13)
 createButton("Бросок", throwAll, 14)
 
--- Обработка клика мыши по объекту (альтернативный способ захвата)
+-- Захват по клику мыши (наведение на объект)
 local function onMouseClick(target)
     if target and not target.Anchored then
+        -- Проверяем, что это не часть персонажа
+        local char = LocalPlayer.Character
+        if char and target:IsDescendantOf(char) then return end
         grabObject(target)
     end
 end
