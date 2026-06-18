@@ -1,6 +1,6 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    Уменьшенное меню
+    Исправлено: объекты двигаются по кнопкам (даже после заморозки/разморозки)
 ]]
 
 local Players = game:GetService("Players")
@@ -113,7 +113,7 @@ local function releaseObject(obj)
     heldObjects[obj] = nil
 end
 
--- Обновление позиции всех объектов
+-- Обновление позиции всех объектов (вызывается каждый кадр)
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -123,14 +123,24 @@ local function updateAllObjects()
             releaseObject(obj)
         else
             if data.isFrozen then
+                -- Заморожен: держим на текущей позиции
                 if data.frozenBP then
                     data.frozenBP.position = obj.Position
                 end
             else
-                if data.bodyPos then
-                    data.bodyPos.position = root.Position + data.offset
+                -- Не заморожен: обновляем позицию через BodyPosition
+                if not data.bodyPos or not data.bodyPos.Parent then
+                    -- Если BodyPosition пропал (например, был удалён), создаём заново
+                    local bp = _Ins("BodyPosition")
+                    bp.maxForce = _VTR(math.huge, math.huge, math.huge)
+                    bp.P = 3000
+                    bp.D = 500
+                    bp.Parent = obj
+                    data.bodyPos = bp
                 end
+                data.bodyPos.position = root.Position + data.offset
             end
+            -- Сохраняем ориентацию (если не заморожен)
             if data.bodyGyro and not data.isFrozen then
                 data.bodyGyro.cframe = obj.CFrame
             end
@@ -138,7 +148,7 @@ local function updateAllObjects()
     end
 end
 
--- Движение всех объектов на дельту
+-- Движение всех объектов на дельту (меняем offset)
 local function moveAllObjects(delta)
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
@@ -159,7 +169,8 @@ local function toggleFreezeAll()
             if data.frozenBP then data.frozenBP:Destroy() data.frozenBP = nil end
             if data.frozenBox then data.frozenBox:Destroy() data.frozenBox = nil end
             data.isFrozen = false
-            if not data.bodyPos then
+            -- Восстанавливаем BodyPosition (если отсутствует)
+            if not data.bodyPos or not data.bodyPos.Parent then
                 local bp = _Ins("BodyPosition")
                 bp.maxForce = _VTR(math.huge, math.huge, math.huge)
                 bp.P = 3000
@@ -167,6 +178,7 @@ local function toggleFreezeAll()
                 bp.Parent = obj
                 data.bodyPos = bp
             end
+            -- Обновляем offset, чтобы избежать рывка
             local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if root then
                 data.offset = obj.Position - root.Position
@@ -238,7 +250,7 @@ local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
--- Кнопочные функции
+-- Кнопочные функции (шаг 1 единица)
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -260,8 +272,8 @@ MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
-MainFrame.Position = UDim2.new(1, -150, 0.5, -130)  -- сместили вправо-вверх
-MainFrame.Size = UDim2.new(0, 140, 0, 260)          -- уменьшили в ~2 раза
+MainFrame.Position = UDim2.new(1, -150, 0.5, -130)
+MainFrame.Size = UDim2.new(0, 140, 0, 260)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -269,25 +281,25 @@ local Title = _Ins("TextLabel")
 Title.Parent = MainFrame
 Title.BackgroundColor3 = Color3.fromRGB(30,30,30)
 Title.BorderSizePixel = 0
-Title.Size = UDim2.new(1,0,0,20)      -- высота 20 вместо 30
+Title.Size = UDim2.new(1,0,0,20)
 Title.Font = Enum.Font.Code
 Title.Text = "TELEKINESIS V6"
 Title.TextColor3 = Color3.fromRGB(255,255,255)
-Title.TextSize = 10                   -- шрифт меньше
+Title.TextSize = 10
 
 local ScrollFrame = _Ins("ScrollingFrame")
 ScrollFrame.Parent = MainFrame
 ScrollFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 ScrollFrame.BorderSizePixel = 0
-ScrollFrame.Position = UDim2.new(0,0,0,20)      -- сдвиг на 20
-ScrollFrame.Size = UDim2.new(1,0,1,-20)         -- остальное место
+ScrollFrame.Position = UDim2.new(0,0,0,20)
+ScrollFrame.Size = UDim2.new(1,0,1,-20)
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80,80,80)
 
 local UIListLayout = _Ins("UIListLayout")
 UIListLayout.Parent = ScrollFrame
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 2)           -- уменьшили отступ
+UIListLayout.Padding = UDim.new(0, 2)
 
 UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 5)
@@ -305,17 +317,16 @@ local function createButton(text, callback, order)
     btn.BackgroundColor3 = Color3.fromRGB(45,45,45)
     btn.BorderColor3 = Color3.fromRGB(70,70,70)
     btn.BorderSizePixel = 1
-    btn.Size = UDim2.new(1, -6, 0, 22)           -- высота кнопки 22
+    btn.Size = UDim2.new(1, -6, 0, 22)
     btn.Font = Enum.Font.Code
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 10                            -- шрифт меньше
+    btn.TextSize = 10
     btn.LayoutOrder = order
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
--- Создание кнопок (все те же)
 createButton("Захват (луч)", function()
     local cam = Workspace.CurrentCamera
     if not cam then return end
