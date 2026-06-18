@@ -1,6 +1,7 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    Исправлено: объекты двигаются по кнопкам (даже после заморозки/разморозки)
+    + Кнопка "Стоп" для мгновенной остановки
+    + Устранено скольжение объектов
 ]]
 
 local Players = game:GetService("Players")
@@ -50,6 +51,20 @@ local function createSelectionBox(obj, color)
     return box
 end
 
+-- Остановка всех движений объекта (скорости + силы)
+local function stopObjectMotion(obj)
+    if not obj then return end
+    -- Удаляем все BodyVelocity и BodyAngularVelocity
+    for _, child in ipairs(obj:GetChildren()) do
+        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+            child:Destroy()
+        end
+    end
+    -- Обнуляем скорости
+    obj.Velocity = _VTR(0,0,0)
+    obj.RotVelocity = _VTR(0,0,0)
+end
+
 -- Захват объекта
 local function grabObject(target)
     if not target or target.Anchored then return false end
@@ -59,6 +74,9 @@ local function grabObject(target)
 
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
+
+    -- Останавливаем объект перед захватом
+    stopObjectMotion(target)
 
     local offset = target.Position - root.Position
 
@@ -97,6 +115,8 @@ local function releaseAll()
         if data.frozenBP then data.frozenBP:Destroy() end
         if data.frozenBox then data.frozenBox:Destroy() end
         if data.selectionBox then data.selectionBox:Destroy() end
+        -- Останавливаем объект
+        stopObjectMotion(obj)
     end
     heldObjects = {}
 end
@@ -110,10 +130,11 @@ local function releaseObject(obj)
     if data.frozenBP then data.frozenBP:Destroy() end
     if data.frozenBox then data.frozenBox:Destroy() end
     if data.selectionBox then data.selectionBox:Destroy() end
+    stopObjectMotion(obj)
     heldObjects[obj] = nil
 end
 
--- Обновление позиции всех объектов (вызывается каждый кадр)
+-- Обновление позиции всех объектов
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -122,15 +143,15 @@ local function updateAllObjects()
         if not obj or not obj.Parent then
             releaseObject(obj)
         else
+            -- Обнуляем скорости каждый кадр, чтобы убрать инерцию
+            stopObjectMotion(obj)
+            
             if data.isFrozen then
-                -- Заморожен: держим на текущей позиции
                 if data.frozenBP then
                     data.frozenBP.position = obj.Position
                 end
             else
-                -- Не заморожен: обновляем позицию через BodyPosition
                 if not data.bodyPos or not data.bodyPos.Parent then
-                    -- Если BodyPosition пропал (например, был удалён), создаём заново
                     local bp = _Ins("BodyPosition")
                     bp.maxForce = _VTR(math.huge, math.huge, math.huge)
                     bp.P = 3000
@@ -140,7 +161,6 @@ local function updateAllObjects()
                 end
                 data.bodyPos.position = root.Position + data.offset
             end
-            -- Сохраняем ориентацию (если не заморожен)
             if data.bodyGyro and not data.isFrozen then
                 data.bodyGyro.cframe = obj.CFrame
             end
@@ -148,7 +168,7 @@ local function updateAllObjects()
     end
 end
 
--- Движение всех объектов на дельту (меняем offset)
+-- Движение всех объектов на дельту
 local function moveAllObjects(delta)
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
@@ -169,7 +189,6 @@ local function toggleFreezeAll()
             if data.frozenBP then data.frozenBP:Destroy() data.frozenBP = nil end
             if data.frozenBox then data.frozenBox:Destroy() data.frozenBox = nil end
             data.isFrozen = false
-            -- Восстанавливаем BodyPosition (если отсутствует)
             if not data.bodyPos or not data.bodyPos.Parent then
                 local bp = _Ins("BodyPosition")
                 bp.maxForce = _VTR(math.huge, math.huge, math.huge)
@@ -178,7 +197,6 @@ local function toggleFreezeAll()
                 bp.Parent = obj
                 data.bodyPos = bp
             end
-            -- Обновляем offset, чтобы избежать рывка
             local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if root then
                 data.offset = obj.Position - root.Position
@@ -250,6 +268,13 @@ local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
+-- Остановить все объекты (сброс скоростей и сил)
+local function stopAll()
+    for obj, data in pairs(heldObjects) do
+        stopObjectMotion(obj)
+    end
+end
+
 -- Кнопочные функции (шаг 1 единица)
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
@@ -273,7 +298,7 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
 MainFrame.Position = UDim2.new(1, -150, 0.5, -130)
-MainFrame.Size = UDim2.new(0, 140, 0, 260)
+MainFrame.Size = UDim2.new(0, 140, 0, 270)  -- чуть выше для кнопки "Стоп"
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -327,6 +352,10 @@ local function createButton(text, callback, order)
     return btn
 end
 
+-- Кнопка "Стоп" будет первой (LayoutOrder = 0)
+createButton("Стоп", stopAll, 0)
+
+-- Остальные кнопки
 createButton("Захват (луч)", function()
     local cam = Workspace.CurrentCamera
     if not cam then return end
