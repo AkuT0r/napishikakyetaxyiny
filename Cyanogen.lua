@@ -1,7 +1,7 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    + Кнопка "Стоп" для мгновенной остановки
-    + Устранено скольжение объектов
+    + Кнопка "Стоп" (останавливает все силы и обнуляет скорости)
+    + Удаление Weld'ов при захвате для свободного управления
 ]]
 
 local Players = game:GetService("Players")
@@ -51,16 +51,30 @@ local function createSelectionBox(obj, color)
     return box
 end
 
--- Остановка всех движений объекта (скорости + силы)
+-- Удаление всех Weld'ов и Motor'ов, связывающих объект с персонажем
+local function removeWeldsToCharacter(obj)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, weld in ipairs(obj:GetChildren()) do
+        if weld:IsA("Weld") or weld:IsA("Motor6D") then
+            local part0 = weld.Part0
+            local part1 = weld.Part1
+            if (part0 and part0:IsDescendantOf(char)) or (part1 and part1:IsDescendantOf(char)) then
+                weld:Destroy()
+            end
+        end
+    end
+end
+
+-- Остановка всех движений объекта (удаление сил и обнуление скоростей)
 local function stopObjectMotion(obj)
     if not obj then return end
-    -- Удаляем все BodyVelocity и BodyAngularVelocity
     for _, child in ipairs(obj:GetChildren()) do
-        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
+           child:IsA("BodyThrust") or child:IsA("BodyForce") then
             child:Destroy()
         end
     end
-    -- Обнуляем скорости
     obj.Velocity = _VTR(0,0,0)
     obj.RotVelocity = _VTR(0,0,0)
 end
@@ -71,6 +85,9 @@ local function grabObject(target)
     if heldObjects[target] then return false end
     local char = LocalPlayer.Character
     if char and target:IsDescendantOf(char) then return false end
+
+    -- Удаляем все Weld'ы с персонажем, чтобы объект стал свободным
+    removeWeldsToCharacter(target)
 
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
@@ -115,7 +132,6 @@ local function releaseAll()
         if data.frozenBP then data.frozenBP:Destroy() end
         if data.frozenBox then data.frozenBox:Destroy() end
         if data.selectionBox then data.selectionBox:Destroy() end
-        -- Останавливаем объект
         stopObjectMotion(obj)
     end
     heldObjects = {}
@@ -143,7 +159,7 @@ local function updateAllObjects()
         if not obj or not obj.Parent then
             releaseObject(obj)
         else
-            -- Обнуляем скорости каждый кадр, чтобы убрать инерцию
+            -- Обнуляем скорости и удаляем лишние силы каждый кадр для устранения инерции
             stopObjectMotion(obj)
             
             if data.isFrozen then
@@ -298,7 +314,7 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
 MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
 MainFrame.Position = UDim2.new(1, -150, 0.5, -130)
-MainFrame.Size = UDim2.new(0, 140, 0, 270)  -- чуть выше для кнопки "Стоп"
+MainFrame.Size = UDim2.new(0, 140, 0, 270)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -352,7 +368,7 @@ local function createButton(text, callback, order)
     return btn
 end
 
--- Кнопка "Стоп" будет первой (LayoutOrder = 0)
+-- Кнопка "Стоп" первой (LayoutOrder = 0)
 createButton("Стоп", stopAll, 0)
 
 -- Остальные кнопки
