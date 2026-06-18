@@ -1,7 +1,7 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    + Кнопка "Стоп" (останавливает все силы и обнуляет скорости)
-    + Удаление Weld'ов при захвате для свободного управления
+    + Постоянное открепление от персонажа (каждый кадр)
+    + Кнопка "Стоп" (удаляет все силы и обнуляет скорости)
 ]]
 
 local Players = game:GetService("Players")
@@ -51,22 +51,52 @@ local function createSelectionBox(obj, color)
     return box
 end
 
--- Удаление всех Weld'ов и Motor'ов, связывающих объект с персонажем
-local function removeWeldsToCharacter(obj)
+-- ОТКРЕПЛЕНИЕ ОТ ПЕРСОНАЖА (полное удаление всех связей)
+local function detachFromPlayer(obj)
     local char = LocalPlayer.Character
     if not char then return end
-    for _, weld in ipairs(obj:GetChildren()) do
+
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.SeatPart == obj then
+        humanoid.SeatPart = nil
+    end
+
+    -- Удаляем Weld'ы внутри объекта, указывающие на персонажа
+    local function processPart(part)
+        for _, weld in ipairs(part:GetChildren()) do
+            if weld:IsA("Weld") or weld:IsA("Motor6D") then
+                local p0 = weld.Part0
+                local p1 = weld.Part1
+                if (p0 and p0:IsDescendantOf(char)) or (p1 and p1:IsDescendantOf(char)) then
+                    weld:Destroy()
+                end
+            end
+        end
+    end
+
+    if obj:IsA("BasePart") then
+        processPart(obj)
+    elseif obj:IsA("Model") then
+        for _, part in ipairs(obj:GetDescendants()) do
+            if part:IsA("BasePart") then
+                processPart(part)
+            end
+        end
+    end
+
+    -- Также удаляем Weld'ы, которые являются детьми персонажа и ссылаются на объект
+    for _, weld in ipairs(char:GetDescendants()) do
         if weld:IsA("Weld") or weld:IsA("Motor6D") then
-            local part0 = weld.Part0
-            local part1 = weld.Part1
-            if (part0 and part0:IsDescendantOf(char)) or (part1 and part1:IsDescendantOf(char)) then
+            local p0 = weld.Part0
+            local p1 = weld.Part1
+            if (p0 and p0:IsDescendantOf(obj)) or (p1 and p1:IsDescendantOf(obj)) then
                 weld:Destroy()
             end
         end
     end
 end
 
--- Остановка всех движений объекта (удаление сил и обнуление скоростей)
+-- ОСТАНОВКА ДВИЖЕНИЯ (удаление всех сил и обнуление скоростей)
 local function stopObjectMotion(obj)
     if not obj then return end
     for _, child in ipairs(obj:GetChildren()) do
@@ -79,20 +109,19 @@ local function stopObjectMotion(obj)
     obj.RotVelocity = _VTR(0,0,0)
 end
 
--- Захват объекта
+-- ЗАХВАТ ОБЪЕКТА
 local function grabObject(target)
     if not target or target.Anchored then return false end
     if heldObjects[target] then return false end
     local char = LocalPlayer.Character
     if char and target:IsDescendantOf(char) then return false end
 
-    -- Удаляем все Weld'ы с персонажем, чтобы объект стал свободным
-    removeWeldsToCharacter(target)
+    -- Открепляем от персонажа
+    detachFromPlayer(target)
 
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
 
-    -- Останавливаем объект перед захватом
     stopObjectMotion(target)
 
     local offset = target.Position - root.Position
@@ -124,7 +153,7 @@ local function grabObject(target)
     return true
 end
 
--- Освободить все
+-- ОСВОБОДИТЬ ВСЕ
 local function releaseAll()
     for obj, data in pairs(heldObjects) do
         if data.bodyPos then data.bodyPos:Destroy() end
@@ -137,7 +166,7 @@ local function releaseAll()
     heldObjects = {}
 end
 
--- Освободить конкретный
+-- ОСВОБОДИТЬ КОНКРЕТНЫЙ
 local function releaseObject(obj)
     local data = heldObjects[obj]
     if not data then return end
@@ -150,7 +179,7 @@ local function releaseObject(obj)
     heldObjects[obj] = nil
 end
 
--- Обновление позиции всех объектов
+-- ОБНОВЛЕНИЕ ПОЗИЦИИ (вызывается каждый кадр)
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
@@ -159,7 +188,10 @@ local function updateAllObjects()
         if not obj or not obj.Parent then
             releaseObject(obj)
         else
-            -- Обнуляем скорости и удаляем лишние силы каждый кадр для устранения инерции
+            -- ВАЖНО: каждый кадр открепляем от персонажа (на случай появления новых связей)
+            detachFromPlayer(obj)
+
+            -- Обнуляем скорости и удаляем лишние силы
             stopObjectMotion(obj)
             
             if data.isFrozen then
@@ -184,14 +216,14 @@ local function updateAllObjects()
     end
 end
 
--- Движение всех объектов на дельту
+-- ДВИЖЕНИЕ ВСЕХ ОБЪЕКТОВ (изменение offset)
 local function moveAllObjects(delta)
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
     end
 end
 
--- Заморозка/разморозка всех
+-- ЗАМОРОЗКА / РАЗМОРОЗКА
 local function toggleFreezeAll()
     if next(heldObjects) == nil then return end
     local allFrozen = true
@@ -234,7 +266,7 @@ local function toggleFreezeAll()
     end
 end
 
--- Вращение (включить/выключить)
+-- ВРАЩЕНИЕ (вкл/выкл)
 local function toggleSpinAll()
     if next(heldObjects) == nil then return end
     local hasSpin = false
@@ -268,7 +300,7 @@ local function toggleSpinAll()
     end
 end
 
--- Поднять (импульс вверх)
+-- ПОДНЯТЬ (импульс вверх)
 local function liftAll()
     for obj, data in pairs(heldObjects) do
         local bv = _Ins("BodyVelocity")
@@ -279,19 +311,19 @@ local function liftAll()
     end
 end
 
--- Бросок (отодвинуть на 90)
+-- БРОСОК (отодвинуть на 90)
 local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
--- Остановить все объекты (сброс скоростей и сил)
+-- ОСТАНОВИТЬ ВСЕ (сброс сил и скоростей)
 local function stopAll()
     for obj, data in pairs(heldObjects) do
         stopObjectMotion(obj)
     end
 end
 
--- Кнопочные функции (шаг 1 единица)
+-- КНОПОЧНЫЕ ФУНКЦИИ (шаг 1)
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -301,7 +333,7 @@ local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
 
--- ============= УМЕНЬШЕННОЕ GUI =============
+-- ============= GUI =============
 local ScreenGui = _Ins("ScreenGui")
 ScreenGui.Name = "TelekinesisGUI"
 ScreenGui.ResetOnSpawn = false
@@ -368,10 +400,7 @@ local function createButton(text, callback, order)
     return btn
 end
 
--- Кнопка "Стоп" первой (LayoutOrder = 0)
 createButton("Стоп", stopAll, 0)
-
--- Остальные кнопки
 createButton("Захват (луч)", function()
     local cam = Workspace.CurrentCamera
     if not cam then return end
