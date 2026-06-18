@@ -1,7 +1,5 @@
 --[[
-    Telekinesis V6 – множественный захват, управление через кнопки
-    + Постоянное открепление от персонажа (каждый кадр)
-    + Кнопка "Стоп" (удаляет все силы и обнуляет скорости)
+    Telekinesis V6 – надёжная версия с полной очисткой
 ]]
 
 local Players = game:GetService("Players")
@@ -32,36 +30,51 @@ Handle.CanCollide = false
 Handle.Locked = true
 Handle.BrickColor = BrickColor.new("Institutional white")
 
--- Звук
 local Sound = _Ins("Sound", Workspace)
 Sound.SoundId = "rbxassetid://1092093337"
 Sound.Volume = 0.3
 Sound:Play()
 
--- Таблица захваченных объектов
-local heldObjects = {}
+-- Глобальные данные
+local heldObjects = {}  -- объект -> данные
 
--- Создание рамки подсветки
-local function createSelectionBox(obj, color)
-    local box = _Ins("SelectionBox")
-    box.LineThickness = 0.03
-    box.Color3 = color or Color3.fromRGB(255,255,255)
-    box.Adornee = obj
-    box.Parent = obj
-    return box
+-- Функции очистки
+local function clearObjectData(obj)
+    local data = heldObjects[obj]
+    if not data then return end
+    if data.bodyPos then data.bodyPos:Destroy() end
+    if data.bodyGyro then data.bodyGyro:Destroy() end
+    if data.frozenBP then data.frozenBP:Destroy() end
+    if data.frozenBox then data.frozenBox:Destroy() end
+    if data.selectionBox then data.selectionBox:Destroy() end
+    -- Удаляем все BodyVelocity и прочие силы
+    for _, child in ipairs(obj:GetChildren()) do
+        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
+           child:IsA("BodyThrust") or child:IsA("BodyForce") then
+            child:Destroy()
+        end
+    end
+    obj.Velocity = _VTR(0,0,0)
+    obj.RotVelocity = _VTR(0,0,0)
+    heldObjects[obj] = nil
 end
 
--- ОТКРЕПЛЕНИЕ ОТ ПЕРСОНАЖА (полное удаление всех связей)
+local function releaseAll()
+    for obj, _ in pairs(heldObjects) do
+        clearObjectData(obj)
+    end
+    heldObjects = {}
+end
+
+-- Открепление от персонажа
 local function detachFromPlayer(obj)
     local char = LocalPlayer.Character
     if not char then return end
-
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if humanoid and humanoid.SeatPart == obj then
         humanoid.SeatPart = nil
     end
-
-    -- Удаляем Weld'ы внутри объекта, указывающие на персонажа
+    -- Удаляем Weld'ы внутри объекта
     local function processPart(part)
         for _, weld in ipairs(part:GetChildren()) do
             if weld:IsA("Weld") or weld:IsA("Motor6D") then
@@ -73,7 +86,6 @@ local function detachFromPlayer(obj)
             end
         end
     end
-
     if obj:IsA("BasePart") then
         processPart(obj)
     elseif obj:IsA("Model") then
@@ -83,8 +95,7 @@ local function detachFromPlayer(obj)
             end
         end
     end
-
-    -- Также удаляем Weld'ы, которые являются детьми персонажа и ссылаются на объект
+    -- Удаляем Weld'ы из персонажа
     for _, weld in ipairs(char:GetDescendants()) do
         if weld:IsA("Weld") or weld:IsA("Motor6D") then
             local p0 = weld.Part0
@@ -96,23 +107,23 @@ local function detachFromPlayer(obj)
     end
 end
 
--- ОСТАНОВКА ДВИЖЕНИЯ (удаление всех сил и обнуление скоростей)
-local function stopObjectMotion(obj)
-    if not obj then return end
-    for _, child in ipairs(obj:GetChildren()) do
-        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
-           child:IsA("BodyThrust") or child:IsA("BodyForce") then
-            child:Destroy()
-        end
-    end
-    obj.Velocity = _VTR(0,0,0)
-    obj.RotVelocity = _VTR(0,0,0)
+-- Создание рамки
+local function createSelectionBox(obj, color)
+    local box = _Ins("SelectionBox")
+    box.LineThickness = 0.03
+    box.Color3 = color or Color3.fromRGB(255,255,255)
+    box.Adornee = obj
+    box.Parent = obj
+    return box
 end
 
--- ЗАХВАТ ОБЪЕКТА
+-- Захват объекта
 local function grabObject(target)
     if not target or target.Anchored then return false end
-    if heldObjects[target] then return false end
+    if heldObjects[target] then 
+        -- Если уже захвачен, ничего не делаем
+        return false 
+    end
     local char = LocalPlayer.Character
     if char and target:IsDescendantOf(char) then return false end
 
@@ -122,7 +133,16 @@ local function grabObject(target)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
 
-    stopObjectMotion(target)
+    -- Очищаем объект от старых сил
+    for _, child in ipairs(target:GetChildren()) do
+        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
+           child:IsA("BodyThrust") or child:IsA("BodyForce") or 
+           child:IsA("BodyPosition") or child:IsA("BodyGyro") then
+            child:Destroy()
+        end
+    end
+    target.Velocity = _VTR(0,0,0)
+    target.RotVelocity = _VTR(0,0,0)
 
     local offset = target.Position - root.Position
 
@@ -153,47 +173,27 @@ local function grabObject(target)
     return true
 end
 
--- ОСВОБОДИТЬ ВСЕ
-local function releaseAll()
-    for obj, data in pairs(heldObjects) do
-        if data.bodyPos then data.bodyPos:Destroy() end
-        if data.bodyGyro then data.bodyGyro:Destroy() end
-        if data.frozenBP then data.frozenBP:Destroy() end
-        if data.frozenBox then data.frozenBox:Destroy() end
-        if data.selectionBox then data.selectionBox:Destroy() end
-        stopObjectMotion(obj)
-    end
-    heldObjects = {}
-end
-
--- ОСВОБОДИТЬ КОНКРЕТНЫЙ
-local function releaseObject(obj)
-    local data = heldObjects[obj]
-    if not data then return end
-    if data.bodyPos then data.bodyPos:Destroy() end
-    if data.bodyGyro then data.bodyGyro:Destroy() end
-    if data.frozenBP then data.frozenBP:Destroy() end
-    if data.frozenBox then data.frozenBox:Destroy() end
-    if data.selectionBox then data.selectionBox:Destroy() end
-    stopObjectMotion(obj)
-    heldObjects[obj] = nil
-end
-
--- ОБНОВЛЕНИЕ ПОЗИЦИИ (вызывается каждый кадр)
+-- Обновление позиции (вызывается каждый кадр)
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
     for obj, data in pairs(heldObjects) do
         if not obj or not obj.Parent then
-            releaseObject(obj)
+            clearObjectData(obj)
         else
-            -- ВАЖНО: каждый кадр открепляем от персонажа (на случай появления новых связей)
+            -- Открепляем от персонажа (на случай новых связей)
             detachFromPlayer(obj)
+            -- Удаляем случайные силы, которые могли появиться
+            for _, child in ipairs(obj:GetChildren()) do
+                if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
+                   child:IsA("BodyThrust") or child:IsA("BodyForce") then
+                    child:Destroy()
+                end
+            end
+            obj.Velocity = _VTR(0,0,0)
+            obj.RotVelocity = _VTR(0,0,0)
 
-            -- Обнуляем скорости и удаляем лишние силы
-            stopObjectMotion(obj)
-            
             if data.isFrozen then
                 if data.frozenBP then
                     data.frozenBP.position = obj.Position
@@ -216,14 +216,14 @@ local function updateAllObjects()
     end
 end
 
--- ДВИЖЕНИЕ ВСЕХ ОБЪЕКТОВ (изменение offset)
+-- Движение всех объектов
 local function moveAllObjects(delta)
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
     end
 end
 
--- ЗАМОРОЗКА / РАЗМОРОЗКА
+-- Заморозка/разморозка
 local function toggleFreezeAll()
     if next(heldObjects) == nil then return end
     local allFrozen = true
@@ -266,7 +266,7 @@ local function toggleFreezeAll()
     end
 end
 
--- ВРАЩЕНИЕ (вкл/выкл)
+-- Вращение
 local function toggleSpinAll()
     if next(heldObjects) == nil then return end
     local hasSpin = false
@@ -300,7 +300,7 @@ local function toggleSpinAll()
     end
 end
 
--- ПОДНЯТЬ (импульс вверх)
+-- Поднять
 local function liftAll()
     for obj, data in pairs(heldObjects) do
         local bv = _Ins("BodyVelocity")
@@ -311,19 +311,26 @@ local function liftAll()
     end
 end
 
--- БРОСОК (отодвинуть на 90)
+-- Бросок
 local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
--- ОСТАНОВИТЬ ВСЕ (сброс сил и скоростей)
+-- Стоп
 local function stopAll()
     for obj, data in pairs(heldObjects) do
-        stopObjectMotion(obj)
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
+               child:IsA("BodyThrust") or child:IsA("BodyForce") then
+                child:Destroy()
+            end
+        end
+        obj.Velocity = _VTR(0,0,0)
+        obj.RotVelocity = _VTR(0,0,0)
     end
 end
 
--- КНОПОЧНЫЕ ФУНКЦИИ (шаг 1)
+-- Кнопочные функции
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -333,7 +340,7 @@ local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
 
--- ============= GUI =============
+-- GUI
 local ScreenGui = _Ins("ScreenGui")
 ScreenGui.Name = "TelekinesisGUI"
 ScreenGui.ResetOnSpawn = false
@@ -373,7 +380,6 @@ local UIListLayout = _Ins("UIListLayout")
 UIListLayout.Parent = ScrollFrame
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 UIListLayout.Padding = UDim.new(0, 2)
-
 UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 5)
 end)
@@ -469,4 +475,4 @@ LocalPlayer.CharacterAdded:Connect(function()
     releaseAll()
 end)
 
-print("Telekinesis V6 loaded successfully!")
+print("Telekinesis V6 (надёжная версия) загружена!")
