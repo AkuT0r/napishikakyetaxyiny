@@ -1,6 +1,5 @@
 --[[
-    Telekinesis V6 – финальная стабильная версия
-    GUI создаётся при экипировке и удаляется при смерти/снятии
+    Telekinesis V6 – финальная версия с мгновенным движением
 ]]
 
 local Players = game:GetService("Players")
@@ -41,7 +40,7 @@ local heldObjects = {}
 local ScreenGui = nil
 local isEquipped = false
 
--- Функции очистки
+-- Очистка данных объекта
 local function clearObjectData(obj)
     local data = heldObjects[obj]
     if not data then return end
@@ -175,7 +174,7 @@ local function grabObject(target)
     return true
 end
 
--- Обновление
+-- Обновление позиции (вызывается каждый кадр)
 local function updateAllObjects()
     if not isEquipped then return end
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -186,6 +185,7 @@ local function updateAllObjects()
             clearObjectData(obj)
         else
             detachFromPlayer(obj)
+            -- Удаляем случайные силы
             for _, child in ipairs(obj:GetChildren()) do
                 if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") or 
                    child:IsA("BodyThrust") or child:IsA("BodyForce") then
@@ -217,10 +217,14 @@ local function updateAllObjects()
     end
 end
 
--- Движение
+-- Движение всех объектов (изменение offset и немедленное применение)
 local function moveAllObjects(delta)
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
+        if root and not data.isFrozen and data.bodyPos and data.bodyPos.Parent then
+            data.bodyPos.position = root.Position + data.offset
+        end
     end
 end
 
@@ -329,7 +333,7 @@ local function stopAll()
     end
 end
 
--- Кнопочные функции
+-- Кнопочные функции (с немедленным применением)
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -339,9 +343,9 @@ local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
 local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
 
--- СОЗДАНИЕ GUI (вызывается при экипировке)
+-- СОЗДАНИЕ GUI
 local function createGUI()
-    destroyGUI() -- на случай, если уже есть
+    destroyGUI()
     ScreenGui = _Ins("ScreenGui")
     ScreenGui.Name = "TelekinesisGUI"
     ScreenGui.ResetOnSpawn = false
@@ -477,12 +481,11 @@ end)
 -- Обновление каждый кадр
 RunService.RenderStepped:Connect(updateAllObjects)
 
--- При респавне очищаем всё и удаляем GUI (если инструмент не в руках)
+-- При респавне
 LocalPlayer.CharacterAdded:Connect(function()
     releaseAll()
     destroyGUI()
     isEquipped = false
-    -- Инструмент останется в рюкзаке, но GUI пересоздастся при экипировке
 end)
 
-print("Telekinesis V6 (финальная версия) загружена!")
+print("Telekinesis V6 (с мгновенным движением) загружена!")
