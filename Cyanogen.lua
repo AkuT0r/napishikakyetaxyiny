@@ -1,500 +1,374 @@
 --[[
-	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+    Telekinesis V6 – множественный захват, управление через кнопки
+    Объекты привязаны к игроку, сохраняют ориентацию
 ]]
-local re=game:GetService("Workspace")
-local _Name="Telekinesis V6"
-local uis=game:GetService("UserInputService")
-local _Ins, _CF_new, _VTR_new=Instance.new, CFrame.new, Vector3.new
-local con=getfenv().sethiddenproperty
-local w=wait
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
-Tool0=_Ins("Tool")
-Part1=_Ins("Part")
-local selectionbox=Instance.new("SelectionBox", LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait())
-selectionbox.LineThickness=0.03
-selectionbox.Color3=Color3.fromRGB(255, 255, 255)	
+local _Ins = Instance.new
+local _VTR = Vector3.new
+local _CF = CFrame.new
+local w = wait
 
-re=game:GetService("RunService")
-Tool0.Name=_Name
-Tool0.Parent=LocalPlayer.Backpack
-Tool0.Grip=_CF_new(0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1)
-Tool0.GripPos=_VTR_new(0, 0, 1)
-Tool0.RequiresHandle = true
-Tool0.CanBeDropped = false
+-- Инструмент
+local Tool = _Ins("Tool")
+Tool.Name = "Telekinesis V6"
+Tool.Parent = LocalPlayer.Backpack
+Tool.RequiresHandle = true
+Tool.CanBeDropped = false
+Tool.Grip = _CF(0,0,1, 1,0,0, 0,1,0, 0,0,1)
+Tool.GripPos = _VTR(0,0,1)
 
-Part1.Name="Handle"
-Part1.Parent=Tool0
-local changed="Changed"
-Part1.CFrame=_CF_new(-3.5, 5.30000019, -3.5, 1, 0, 0, 0, -1, 0, 0, 0, -1)
-Part1.Orientation=_VTR_new(0, 180, 180)
-Part1.Position=_VTR_new(-3.5, 5.300000190734863, -3.5)
-Part1.Rotation=_VTR_new(-180, 0, 0)
-Part1.Color=Color3.new(0.972549, 0.972549, 0.972549)
-Part1.Transparency=1
-local cam=re.RenderStepped
-Part1.Size=_VTR_new(1, 1, 1)
-Part1.BottomSurface=Enum.SurfaceType.Smooth
-Part1.BrickColor=BrickColor.new("Institutional white")
-Part1.Locked=true
-local speed=31
-local mb=uis.TouchEnabled
-Part1.TopSurface=Enum.SurfaceType.Smooth
-Part1.brickColor=BrickColor.new("Institutional white")
+local Handle = _Ins("Part")
+Handle.Name = "Handle"
+Handle.Parent = Tool
+Handle.Size = _VTR(1,1,1)
+Handle.Transparency = 1
+Handle.CanCollide = false
+Handle.Locked = true
+Handle.BrickColor = BrickColor.new("Institutional white")
 
-local Sound=_Ins("Sound", game.Workspace)
-Sound.SoundId="rbxassetid://1092093337"
+-- Звук при экипировке
+local Sound = _Ins("Sound", Workspace)
+Sound.SoundId = "rbxassetid://1092093337"
 Sound.Volume = 0.3
 Sound:Play()
 
-pcall(function()
-    cam:Connect(function() 
-        if con then 
-            pcall(function() 
-                con(LocalPlayer, changed, speed) 
-            end) 
-        end 
-    end)
-end)
+-- Глобальное состояние: таблица захваченных объектов
+local heldObjects = {}  -- key = объект, value = {bodyPos, bodyGyro, offset, frozenBP, frozenBox, isFrozen, selectionBox}
 
-changed="SimulationRadius"
+-- Подсветка последнего захваченного (для удобства) – можно не использовать, но оставим
+local lastGrabbed = nil
 
+-- Функция создания SelectionBox
+local function createSelectionBox(obj, color)
+    local box = _Ins("SelectionBox")
+    box.LineThickness = 0.03
+    box.Color3 = color or Color3.fromRGB(255,255,255)
+    box.Adornee = obj
+    box.Parent = obj
+    return box
+end
+
+-- Захват объекта
+local function grabObject(target)
+    if not target or target.Anchored then return end
+    if heldObjects[target] then return end  -- уже захвачен
+
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    -- Вычисляем смещение
+    local offset = target.Position - root.Position
+
+    -- BodyPosition для удержания позиции
+    local bp = _Ins("BodyPosition")
+    bp.maxForce = _VTR(math.huge, math.huge, math.huge)
+    bp.P = 3000
+    bp.D = 500
+    bp.Parent = target
+
+    -- BodyGyro для удержания ориентации (стабильность)
+    local bg = _Ins("BodyGyro")
+    bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
+    bg.cframe = target.CFrame
+    bg.P = 5000
+    bg.D = 1000
+    bg.Parent = target
+
+    -- Подсветка
+    local selBox = createSelectionBox(target, Color3.fromRGB(255,255,255))
+
+    -- Сохраняем данные
+    heldObjects[target] = {
+        bodyPos = bp,
+        bodyGyro = bg,
+        offset = offset,
+        frozenBP = nil,
+        frozenBox = nil,
+        isFrozen = false,
+        selectionBox = selBox
+    }
+
+    lastGrabbed = target
+end
+
+-- Освободить все объекты
+local function releaseAll()
+    for obj, data in pairs(heldObjects) do
+        if data.bodyPos then data.bodyPos:Destroy() end
+        if data.bodyGyro then data.bodyGyro:Destroy() end
+        if data.frozenBP then data.frozenBP:Destroy() end
+        if data.frozenBox then data.frozenBox:Destroy() end
+        if data.selectionBox then data.selectionBox:Destroy() end
+    end
+    heldObjects = {}
+    lastGrabbed = nil
+end
+
+-- Освободить конкретный (не используется в этой версии, но можно добавить)
+local function releaseObject(obj)
+    local data = heldObjects[obj]
+    if not data then return end
+    if data.bodyPos then data.bodyPos:Destroy() end
+    if data.bodyGyro then data.bodyGyro:Destroy() end
+    if data.frozenBP then data.frozenBP:Destroy() end
+    if data.frozenBox then data.frozenBox:Destroy() end
+    if data.selectionBox then data.selectionBox:Destroy() end
+    heldObjects[obj] = nil
+    if lastGrabbed == obj then lastGrabbed = nil end
+end
+
+-- Обновление позиции всех объектов
+local function updateAllObjects()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    for obj, data in pairs(heldObjects) do
+        -- Если объект удалён или не существует, освобождаем его
+        if not obj or not obj.Parent then
+            releaseObject(obj)
+        else
+            if data.isFrozen then
+                -- Заморожен – держим на текущей позиции
+                if data.frozenBP then
+                    data.frozenBP.position = obj.Position
+                end
+            else
+                -- Обычный режим
+                if data.bodyPos then
+                    data.bodyPos.position = root.Position + data.offset
+                end
+            end
+            -- Обновляем ориентацию, если не frozen (или если хотим сохранять ориентацию)
+            if data.bodyGyro and not data.isFrozen then
+                data.bodyGyro.cframe = obj.CFrame  -- чтобы не сбрасывать накопленное вращение
+            end
+        end
+    end
+end
+
+-- Изменение смещения для всех объектов (движение)
+local function moveAllObjects(delta)
+    for obj, data in pairs(heldObjects) do
+        data.offset = data.offset + delta
+    end
+end
+
+-- Заморозка/разморозка всех
+local function toggleFreezeAll()
+    if next(heldObjects) == nil then return end
+    local allFrozen = true
+    for _, data in pairs(heldObjects) do
+        if not data.isFrozen then allFrozen = false break end
+    end
+
+    for obj, data in pairs(heldObjects) do
+        if allFrozen then
+            -- Разморозка
+            if data.frozenBP then data.frozenBP:Destroy() data.frozenBP = nil end
+            if data.frozenBox then data.frozenBox:Destroy() data.frozenBox = nil end
+            data.isFrozen = false
+            -- Восстанавливаем обычный BodyPosition (удаляем заморозочный)
+        else
+            -- Заморозка: фиксируем текущую позицию
+            if data.bodyPos then data.bodyPos:Destroy() data.bodyPos = nil end
+            local freezeBP = _Ins("BodyPosition")
+            freezeBP.maxForce = _VTR(math.huge, math.huge, math.huge)
+            freezeBP.P = 5000
+            freezeBP.D = 1000
+            freezeBP.position = obj.Position
+            freezeBP.Parent = obj
+            data.frozenBP = freezeBP
+            -- Зелёная рамка
+            local box = createSelectionBox(obj, Color3.fromRGB(0,255,0))
+            data.frozenBox = box
+            data.isFrozen = true
+        end
+    end
+end
+
+-- Включение/выключение вращения всех объектов
+local function toggleSpinAll()
+    if next(heldObjects) == nil then return end
+    local hasSpin = false
+    for _, data in pairs(heldObjects) do
+        if data.bodyGyro and data.bodyGyro.Parent then
+            -- Проверяем, вращает ли он (можно по CFrame)
+            hasSpin = true
+            break
+        end
+    end
+
+    for obj, data in pairs(heldObjects) do
+        if hasSpin then
+            -- Отключаем вращение: удаляем BodyGyro и создаём новый без вращения
+            if data.bodyGyro then data.bodyGyro:Destroy() end
+            local bg = _Ins("BodyGyro")
+            bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
+            bg.cframe = obj.CFrame
+            bg.P = 5000
+            bg.D = 1000
+            bg.Parent = obj
+            data.bodyGyro = bg
+        else
+            -- Включаем вращение: добавляем вращение вокруг Y
+            if data.bodyGyro then data.bodyGyro:Destroy() end
+            local bg = _Ins("BodyGyro")
+            bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
+            bg.cframe = obj.CFrame * _CF(0, math.rad(45), 0)  -- поворот на 45 градусов, будет обновляться
+            bg.P = 5000
+            bg.D = 1000
+            bg.Parent = obj
+            data.bodyGyro = bg
+        end
+    end
+end
+
+-- Поднять все объекты (кратковременный импульс вверх)
+local function liftAll()
+    for obj, data in pairs(heldObjects) do
+        local bv = _Ins("BodyVelocity")
+        bv.maxForce = _VTR(0, math.huge, 0)
+        bv.velocity = _VTR(0, 50, 0)
+        bv.Parent = obj
+        game:GetService("Debris"):AddItem(bv, 0.5)
+    end
+end
+
+-- Бросок всех объектов вперёд (увеличиваем смещение Z)
+local function throwAll()
+    moveAllObjects(_VTR(0, 0, 90))
+end
+
+-- Движение по направлениям (кнопки)
+local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
+local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
+local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
+local function moveRight() moveAllObjects(_VTR(1, 0, 0)) end
+local function moveForward() moveAllObjects(_VTR(0, 0, 1)) end
+local function moveBackward() moveAllObjects(_VTR(0, 0, -1)) end
+local function moveCloser() moveAllObjects(_VTR(0, 0, -1)) end
+local function moveFurther() moveAllObjects(_VTR(0, 0, 1)) end
+
+-- GUI
 local ScreenGui = _Ins("ScreenGui")
 ScreenGui.Name = "TelekinesisGUI"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = _Ins("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-MainFrame.BorderColor3 = Color3.fromRGB(60, 60, 60)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+MainFrame.BorderColor3 = Color3.fromRGB(60,60,60)
 MainFrame.BorderSizePixel = 1
-MainFrame.Position = UDim2.new(1, -210, 0.5, -180)
-MainFrame.Size = UDim2.new(0, 200, 0, 360)
+MainFrame.Position = UDim2.new(1, -240, 0.5, -220)
+MainFrame.Size = UDim2.new(0, 230, 0, 440)
+MainFrame.Active = true
+MainFrame.Draggable = true
 
 local Title = _Ins("TextLabel")
-Title.Name = "Title"
 Title.Parent = MainFrame
-Title.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Title.BackgroundColor3 = Color3.fromRGB(30,30,30)
 Title.BorderSizePixel = 0
-Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Size = UDim2.new(1,0,0,30)
 Title.Font = Enum.Font.Code
 Title.Text = "TELEKINESIS V6"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextColor3 = Color3.fromRGB(255,255,255)
 Title.TextSize = 14
 
-local ScrollFrame = _Ins("ScrollingFrame")
-ScrollFrame.Name = "ControlsList"
-ScrollFrame.Parent = MainFrame
-ScrollFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-ScrollFrame.BorderSizePixel = 0
-ScrollFrame.Position = UDim2.new(0, 0, 0, 30)
-ScrollFrame.Size = UDim2.new(1, 0, 1, -30)
-ScrollFrame.ScrollBarThickness = 6
-ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+local ControlsFrame = _Ins("Frame")
+ControlsFrame.Parent = MainFrame
+ControlsFrame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+ControlsFrame.BorderSizePixel = 0
+ControlsFrame.Position = UDim2.new(0,0,0,30)
+ControlsFrame.Size = UDim2.new(1,0,1,-30)
 
-local UIListLayout = _Ins("UIListLayout")
-UIListLayout.Parent = ScrollFrame
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 2)
-UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 5)
-end)
+local UIGrid = _Ins("UIGridLayout")
+UIGrid.Parent = ControlsFrame
+UIGrid.SortOrder = Enum.SortOrder.LayoutOrder
+UIGrid.CellPadding = UDim.new(0, 4)
+UIGrid.CellSize = UDim2.new(0, 65, 0, 35)
+UIGrid.FillDirection = Enum.FillDirection.Vertical
+UIGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-local UIPadding = _Ins("UIPadding")
-UIPadding.Parent = ScrollFrame
-UIPadding.PaddingTop = UDim.new(0, 5)
-UIPadding.PaddingLeft = UDim.new(0, 8)
-UIPadding.PaddingRight = UDim.new(0, 8)
-
-local function createControlLabel(keyText, actionText, descText, layoutOrder)
-    local ControlFrame = _Ins("Frame")
-    ControlFrame.Name = "Control"
-    ControlFrame.Parent = ScrollFrame
-    ControlFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    ControlFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
-    ControlFrame.BorderSizePixel = 1
-    ControlFrame.Size = UDim2.new(1, -10, 0, 40)
-    ControlFrame.LayoutOrder = layoutOrder
-    
-    local KeyLabel = _Ins("TextLabel")
-    KeyLabel.Name = "Key"
-    KeyLabel.Parent = ControlFrame
-    KeyLabel.BackgroundTransparency = 1
-    KeyLabel.Position = UDim2.new(0, 5, 0, 3)
-    KeyLabel.Size = UDim2.new(0, 20, 0, 15)
-    KeyLabel.Font = Enum.Font.Code
-    KeyLabel.Text = keyText
-    KeyLabel.TextColor3 = Color3.fromRGB(120, 180, 255)
-    KeyLabel.TextSize = 13
-    KeyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
-    local ActionLabel = _Ins("TextLabel")
-    ActionLabel.Name = "Action"
-    ActionLabel.Parent = ControlFrame
-    ActionLabel.BackgroundTransparency = 1
-    ActionLabel.Position = UDim2.new(0, 28, 0, 3)
-    ActionLabel.Size = UDim2.new(1, -33, 0, 15)
-    ActionLabel.Font = Enum.Font.Code
-    ActionLabel.Text = actionText
-    ActionLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ActionLabel.TextSize = 12
-    ActionLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
-    local DescLabel = _Ins("TextLabel")
-    DescLabel.Name = "Description"
-    DescLabel.Parent = ControlFrame
-    DescLabel.BackgroundTransparency = 1
-    DescLabel.Position = UDim2.new(0, 5, 0, 20)
-    DescLabel.Size = UDim2.new(1, -10, 0, 15)
-    DescLabel.Font = Enum.Font.Code
-    DescLabel.Text = descText
-    DescLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
-    DescLabel.TextSize = 10
-    DescLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
-    return ControlFrame
+local function createButton(text, callback, order)
+    local btn = _Ins("TextButton")
+    btn.Parent = ControlsFrame
+    btn.BackgroundColor3 = Color3.fromRGB(45,45,45)
+    btn.BorderColor3 = Color3.fromRGB(70,70,70)
+    btn.BorderSizePixel = 1
+    btn.Font = Enum.Font.Code
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.TextSize = 11
+    btn.LayoutOrder = order
+    btn.MouseButton1Click:Connect(callback)
+    return btn
 end
 
-createControlLabel("LMB", "Grab", "Click to grab objects", 1)
-createControlLabel("F", "Freeze", "Lock object in place", 2)
-createControlLabel("E", "Pull In", "Decrease distance by 5", 3)
-createControlLabel("Q", "Push Out", "Increase distance by 5", 4)
-createControlLabel("X", "Close", "Set distance to 15", 5)
-createControlLabel("Y", "Throw", "Set distance to 100", 6)
-createControlLabel("J", "Launch", "Set distance to 5000", 7)
-createControlLabel("L", "Lock Spin", "Stop object rotation", 8)
-createControlLabel("U", "Spin", "Apply rotation force", 9)
-createControlLabel("P", "Lift", "Apply upward force", 10)
+-- Кнопки
+createButton("Захватить", function()
+    local cam = Workspace.CurrentCamera
+    local ray = Ray.new(cam.CFrame.p, cam.CFrame.LookVector * 100)
+    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character)
+    if hit then grabObject(hit) end
+end, 1)
 
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+createButton("Отпустить все", releaseAll, 2)
+createButton("Вверх", moveUp, 3)
+createButton("Вниз", moveDown, 4)
+createButton("Влево", moveLeft, 5)
+createButton("Вправо", moveRight, 6)
+createButton("Вперёд", moveForward, 7)
+createButton("Назад", moveBackward, 8)
+createButton("Приблизить", moveCloser, 9)
+createButton("Отдалить", moveFurther, 10)
+createButton("Заморозить", toggleFreezeAll, 11)
+createButton("Вращать", toggleSpinAll, 12)
+createButton("Поднять", liftAll, 13)
+createButton("Бросок", throwAll, 14)
 
-local frozenObjects = {}
-local heldObjects = {}
-local activeLines = {}
-
-local LineConnect=function(part1,part2,parent)
-    local line=_Ins("Part")
-    line.TopSurface=0
-    line.BottomSurface=0
-    line.Reflectance=.5
-    line.Name="Laser"
-    line.Locked=true
-    line.CanCollide=false
-    line.Anchored=true
-    line.formFactor=0
-    line.Size=_VTR_new(1,1,1)
-    local mesh=_Ins("BlockMesh")
-    mesh.Parent=line
-    
-    local connection
-    connection = game:GetService("RunService").RenderStepped:Connect(function()
-        if not part1 or not part2 or not part1.Parent or not part2.Parent then
-            pcall(function() line:Destroy() end)
-            if connection then connection:Disconnect() end
-            return
-        end
-        
-        local lv=_CF_new(part1.Position,part2.Position)
-        local dist=(part1.Position-part2.Position).magnitude
-        line.Parent=parent
-        line.BrickColor=Part1.BrickColor
-        line.Reflectance=Part1.Reflectance
-        line.Transparency=Part1.Transparency
-        line.CFrame=_CF_new(part1.Position+lv.lookVector*dist/2)
-        line.CFrame=_CF_new(line.Position,part2.Position)
-        mesh.Scale=_VTR_new(.25,.25,dist)
-    end)
-    
-    table.insert(activeLines, {line=line, connection=connection})
-    return line, connection
-end
-
-local tool=Tool0
-local object=nil
-local mousedown=false
-local found=false
-local dist=nil
-local point=_Ins("Part")
-point.Locked=true
-point.Anchored=true
-point.formFactor=0
-point.Shape=0
-point.BrickColor=BrickColor.Blue() 
-point.Size=_VTR_new(1,1,1)
-point.CanCollide=false
-local mesh=_Ins("SpecialMesh")
-mesh.MeshType="Sphere"
-mesh.Scale=_VTR_new(.7,.7,.7)
-mesh.Parent=point
-local handle=tool.Handle
-local front=tool.Handle
-local color=tool.Handle
-
-local onButton1Down=function(mouse)
-    if (mousedown==true) then return end
-    mousedown=true
-    
-    coroutine.resume(coroutine.create(function()
-        local p=point:clone()
-        p.Parent=tool
-        local lineObj, lineConn = LineConnect(front,p,workspace)
-        
-        while (mousedown==true) do
-            p.Parent=tool
-            if (object==nil) then
-                if (mouse.Target==nil) then
-                    local lv=_CF_new(front.Position,mouse.Hit.p)
-                    p.CFrame=_CF_new(front.Position+(lv.lookVector*1000))
-                else
-                    p.CFrame=_CF_new(mouse.Hit.p)
-                end
-            else
-                LineConnect(front,object,workspace)
-                break
-            end
-            w()
-        end
-        
-        if lineConn then lineConn:Disconnect() end
-        pcall(function() p:Destroy() end)
-    end))
-    
-    while (mousedown==true) do
-        if (mouse.Target~=nil) then
-            local t=mouse.Target
-            if (t.Anchored==false) then
-                object=t
-                selectionbox.Adornee=object
-                dist=(object.Position-front.Position).magnitude
-                break
-            end
-        end
-        w()
-    end
-    
-    local currentBP = _Ins("BodyPosition")
-    currentBP.maxForce=_VTR_new(math.huge*math.huge,math.huge*math.huge,math.huge*math.huge)
-    currentBP.P=currentBP.P*3
-    
-    if object then
-        heldObjects[object] = {BP = currentBP, dist = dist}
-    end
-    
-    while (mousedown==true) do
-        if (object==nil or object.Parent==nil) then break end
-        local lv=_CF_new(front.Position,mouse.Hit.p)
-        currentBP.Parent=object
-        currentBP.position=front.Position+lv.lookVector*dist
-        w()
-    end
-    
-    if object and not frozenObjects[object] then
-        pcall(function() currentBP:Destroy() end)
-        heldObjects[object] = nil
-        object=nil
-        selectionbox.Adornee=nil
+-- Обработка клика мыши для захвата
+local function onMouseClick(target)
+    if target and not target.Anchored then
+        grabObject(target)
     end
 end
 
-local onKeyDown=function(key,mouse) 
-    local key=key:lower() 
-    
-    if (key=="q") then 
-        if (dist and dist>=5) then 
-            dist=dist-5
-            if heldObjects[object] then
-                heldObjects[object].dist = dist
-            end
-        end 
-    end
-    
-    if (key=="u") then 
-        if (object and dist ~=1) then 
-            local BX=_Ins("BodyGyro")
-            BX.MaxTorque=_VTR_new(math.huge,0,math.huge)
-            BX.CFrame=BX.CFrame * CFrame.Angles(0, math.rad(45), 0)
-            BX.D=0
-            BX.Parent=object
-        end 
-    end 
-    
-    if (key=="p") then 
-        if (object and dist ~=1) then
-            local BX=_Ins("BodyVelocity")
-            BX.maxForce=_VTR_new(0,math.huge,0)
-            BX.velocity=_VTR_new(0,1,0)
-            BX.Parent=object
-        end 
-    end 
-    
-    if key == "l" then 
-        if (object==nil) then return end 
-        
-        for _,v in pairs(object:GetChildren()) do 
-            if v.ClassName == "BodyGyro" then 
-                return nil 
-            end 
-        end 
-        
-        local BG=_Ins("BodyGyro") 
-        BG.maxTorque=_VTR_new(math.huge,math.huge,math.huge) 
-        BG.cframe=_CF_new(object.CFrame.p) 
-        BG.Parent=object 
-        
-        repeat w() until(object.CFrame == _CF_new(object.CFrame.p))
-        
-        BG.Parent=nil 
-        
-        if (object==nil) then return end 
-        
-        for _,v in pairs(object:GetChildren()) do 
-            if v.ClassName == "BodyGyro" then 
-                v.Parent=nil 
-            end 
-        end 
-        
-        object.Velocity=_VTR_new(0,0,0) 
-        object.RotVelocity=_VTR_new(0,0,0) 
-    end 
-    
-    if (key=="y") then 
-        if (dist ~=100) then 
-            dist=100
-            if heldObjects[object] then
-                heldObjects[object].dist = dist
-            end
-        end 
-    end 
-    
-    if (key=="j") then 
-        if (dist~=5000) then 
-            dist=5000
-            if heldObjects[object] then
-                heldObjects[object].dist = dist
-            end
-        end 
-    end
-    
-    if (key=="e") then
-        if dist then
-            dist=dist+5
-            if heldObjects[object] then
-                heldObjects[object].dist = dist
-            end
-        end
-    end
-    
-    if (key=="x") then 
-        if dist ~= 15 then 
-            dist=15
-            if heldObjects[object] then
-                heldObjects[object].dist = dist
-            end
-        end 
-    end 
-    
-    if (key=="f") then 
-        if (object==nil) then return end 
-        
-        if frozenObjects[object] then
-            local frozenData = frozenObjects[object]
-            if frozenData.BP then
-                pcall(function() frozenData.BP:Destroy() end)
-            end
-            if frozenData.selectionBox then
-                pcall(function() frozenData.selectionBox:Destroy() end)
-            end
-            frozenObjects[object] = nil
-        else
-            local holdData = heldObjects[object]
-            if not holdData then return end
-            
-            local freezeBP = holdData.BP
-            
-            local freezeBox = _Ins("SelectionBox")
-            freezeBox.LineThickness = 0.03
-            freezeBox.Color3 = Color3.fromRGB(0, 255, 0)
-            freezeBox.Adornee = object
-            freezeBox.Parent = object
-            
-            frozenObjects[object] = {
-                BP = freezeBP,
-                selectionBox = freezeBox,
-                object = object
-            }
-            
-            heldObjects[object] = nil
-            
-            object = nil
-            selectionbox.Adornee = nil
-        end
-    end
-end
-
-local onEquipped=function(mouse)
-    local char=tool.Parent
-    local human=char:FindFirstChildOfClass("Humanoid")
-    
+-- События инструмента
+Tool.Equipped:Connect(function(mouse)
+    local char = Tool.Parent
+    local human = char:FindFirstChildOfClass("Humanoid")
     if human then
-        human.Changed:connect(function() 
-            if (human.Health==0) then 
-                mousedown=false 
-                point:Remove() 
-                tool:Remove() 
-            end 
+        human.Changed:Connect(function()
+            if human.Health == 0 then
+                releaseAll()
+                Tool:Remove()
+            end
         end)
     end
-    
-    mouse.Button1Down:connect(function() onButton1Down(mouse) end)
-    mouse.KeyDown:connect(function(key) onKeyDown(key,mouse) end)
-    mouse.Icon="rbxasset://textures\\GunCursor.png"
-    
-    if mb then
-        uis.TouchLongPress:Connect(function() onKeyDown("y",mouse) end)
-        uis.TouchEnded:Connect(function() mousedown=false end)
-    else
-        mouse.Button1Up:connect(function() mousedown=false end)
-    end
-end
+    mouse.Button1Down:Connect(function()
+        if mouse.Target then
+            onMouseClick(mouse.Target)
+        end
+    end)
+    mouse.Icon = "rbxasset://textures\\GunCursor.png"
+end)
 
-local function cleanup()
-    mousedown=false 
-    
-    for _, lineData in pairs(activeLines) do
-        if lineData.connection then lineData.connection:Disconnect() end
-        if lineData.line then pcall(function() lineData.line:Destroy() end) end
-    end
-    activeLines = {}
-    
-    for obj, data in pairs(heldObjects) do
-        if data.BP then pcall(function() data.BP:Destroy() end) end
-    end
-    heldObjects = {}
-    
-    if object then
-        object = nil
-        selectionbox.Adornee = nil
-    end
-end
+Tool.Unequipped:Connect(releaseAll)
 
-Tool0.Equipped:connect(onEquipped)
-Tool0.Unequipped:connect(cleanup)
+-- Обновление позиции каждый кадр
+RunService.RenderStepped:Connect(updateAllObjects)
 
+-- Очистка при респавне
 LocalPlayer.CharacterAdded:Connect(function()
-    cleanup()
-    
-    for obj, data in pairs(frozenObjects) do
-        if data.BP then pcall(function() data.BP:Destroy() end) end
-        if data.selectionBox then pcall(function() data.selectionBox:Destroy() end) end
-    end
-    frozenObjects = {}
-    
-    w(0.1)
-    selectionbox = Instance.new("SelectionBox", LocalPlayer.Character)
-    selectionbox.LineThickness=0.03
-    selectionbox.Color3=Color3.fromRGB(255, 255, 255)
+    releaseAll()
+    wait(0.1)
+    -- Можно пересоздать SelectionBox для нового персонажа, но он не нужен, т.к. они создаются для объектов
 end)
