@@ -1,20 +1,19 @@
 --[[
     Telekinesis V6 – множественный захват, управление через кнопки
-    Объекты привязаны к игроку, сохраняют ориентацию
+    Исправленная и рабочая версия
 ]]
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
 
 local _Ins = Instance.new
 local _VTR = Vector3.new
 local _CF = CFrame.new
-local w = wait
 
--- Инструмент
+-- Создание инструмента
 local Tool = _Ins("Tool")
 Tool.Name = "Telekinesis V6"
 Tool.Parent = LocalPlayer.Backpack
@@ -32,19 +31,16 @@ Handle.CanCollide = false
 Handle.Locked = true
 Handle.BrickColor = BrickColor.new("Institutional white")
 
--- Звук при экипировке
+-- Звук
 local Sound = _Ins("Sound", Workspace)
 Sound.SoundId = "rbxassetid://1092093337"
 Sound.Volume = 0.3
 Sound:Play()
 
--- Глобальное состояние: таблица захваченных объектов
-local heldObjects = {}  -- key = объект, value = {bodyPos, bodyGyro, offset, frozenBP, frozenBox, isFrozen, selectionBox}
+-- Таблица захваченных объектов
+local heldObjects = {}  -- obj -> {bodyPos, bodyGyro, offset, frozenBP, frozenBox, isFrozen, selectionBox}
 
--- Подсветка последнего захваченного (для удобства) – можно не использовать, но оставим
-local lastGrabbed = nil
-
--- Функция создания SelectionBox
+-- Создание рамки подсветки
 local function createSelectionBox(obj, color)
     local box = _Ins("SelectionBox")
     box.LineThickness = 0.03
@@ -56,23 +52,20 @@ end
 
 -- Захват объекта
 local function grabObject(target)
-    if not target or target.Anchored then return end
-    if heldObjects[target] then return end  -- уже захвачен
+    if not target or target.Anchored then return false end
+    if heldObjects[target] then return false end
 
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    if not root then return false end
 
-    -- Вычисляем смещение
     local offset = target.Position - root.Position
 
-    -- BodyPosition для удержания позиции
     local bp = _Ins("BodyPosition")
     bp.maxForce = _VTR(math.huge, math.huge, math.huge)
     bp.P = 3000
     bp.D = 500
     bp.Parent = target
 
-    -- BodyGyro для удержания ориентации (стабильность)
     local bg = _Ins("BodyGyro")
     bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
     bg.cframe = target.CFrame
@@ -80,10 +73,8 @@ local function grabObject(target)
     bg.D = 1000
     bg.Parent = target
 
-    -- Подсветка
     local selBox = createSelectionBox(target, Color3.fromRGB(255,255,255))
 
-    -- Сохраняем данные
     heldObjects[target] = {
         bodyPos = bp,
         bodyGyro = bg,
@@ -93,11 +84,10 @@ local function grabObject(target)
         isFrozen = false,
         selectionBox = selBox
     }
-
-    lastGrabbed = target
+    return true
 end
 
--- Освободить все объекты
+-- Освободить все
 local function releaseAll()
     for obj, data in pairs(heldObjects) do
         if data.bodyPos then data.bodyPos:Destroy() end
@@ -107,10 +97,9 @@ local function releaseAll()
         if data.selectionBox then data.selectionBox:Destroy() end
     end
     heldObjects = {}
-    lastGrabbed = nil
 end
 
--- Освободить конкретный (не используется в этой версии, но можно добавить)
+-- Освободить конкретный (для внутреннего использования)
 local function releaseObject(obj)
     local data = heldObjects[obj]
     if not data then return end
@@ -120,39 +109,35 @@ local function releaseObject(obj)
     if data.frozenBox then data.frozenBox:Destroy() end
     if data.selectionBox then data.selectionBox:Destroy() end
     heldObjects[obj] = nil
-    if lastGrabbed == obj then lastGrabbed = nil end
 end
 
--- Обновление позиции всех объектов
+-- Обновление позиции всех объектов (вызывается каждый кадр)
 local function updateAllObjects()
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
     for obj, data in pairs(heldObjects) do
-        -- Если объект удалён или не существует, освобождаем его
         if not obj or not obj.Parent then
             releaseObject(obj)
         else
             if data.isFrozen then
-                -- Заморожен – держим на текущей позиции
                 if data.frozenBP then
                     data.frozenBP.position = obj.Position
                 end
             else
-                -- Обычный режим
                 if data.bodyPos then
                     data.bodyPos.position = root.Position + data.offset
                 end
             end
-            -- Обновляем ориентацию, если не frozen (или если хотим сохранять ориентацию)
+            -- Сохраняем ориентацию (если не заморожен)
             if data.bodyGyro and not data.isFrozen then
-                data.bodyGyro.cframe = obj.CFrame  -- чтобы не сбрасывать накопленное вращение
+                data.bodyGyro.cframe = obj.CFrame
             end
         end
     end
 end
 
--- Изменение смещения для всех объектов (движение)
+-- Движение всех объектов на дельту
 local function moveAllObjects(delta)
     for obj, data in pairs(heldObjects) do
         data.offset = data.offset + delta
@@ -173,9 +158,8 @@ local function toggleFreezeAll()
             if data.frozenBP then data.frozenBP:Destroy() data.frozenBP = nil end
             if data.frozenBox then data.frozenBox:Destroy() data.frozenBox = nil end
             data.isFrozen = false
-            -- Восстанавливаем обычный BodyPosition (удаляем заморозочный)
         else
-            -- Заморозка: фиксируем текущую позицию
+            -- Заморозка
             if data.bodyPos then data.bodyPos:Destroy() data.bodyPos = nil end
             local freezeBP = _Ins("BodyPosition")
             freezeBP.maxForce = _VTR(math.huge, math.huge, math.huge)
@@ -184,7 +168,6 @@ local function toggleFreezeAll()
             freezeBP.position = obj.Position
             freezeBP.Parent = obj
             data.frozenBP = freezeBP
-            -- Зелёная рамка
             local box = createSelectionBox(obj, Color3.fromRGB(0,255,0))
             data.frozenBox = box
             data.isFrozen = true
@@ -192,13 +175,12 @@ local function toggleFreezeAll()
     end
 end
 
--- Включение/выключение вращения всех объектов
+-- Включение/выключение вращения
 local function toggleSpinAll()
     if next(heldObjects) == nil then return end
     local hasSpin = false
     for _, data in pairs(heldObjects) do
         if data.bodyGyro and data.bodyGyro.Parent then
-            -- Проверяем, вращает ли он (можно по CFrame)
             hasSpin = true
             break
         end
@@ -206,7 +188,7 @@ local function toggleSpinAll()
 
     for obj, data in pairs(heldObjects) do
         if hasSpin then
-            -- Отключаем вращение: удаляем BodyGyro и создаём новый без вращения
+            -- Выключаем вращение
             if data.bodyGyro then data.bodyGyro:Destroy() end
             local bg = _Ins("BodyGyro")
             bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
@@ -216,11 +198,11 @@ local function toggleSpinAll()
             bg.Parent = obj
             data.bodyGyro = bg
         else
-            -- Включаем вращение: добавляем вращение вокруг Y
+            -- Включаем вращение (поворот на 45° по Y)
             if data.bodyGyro then data.bodyGyro:Destroy() end
             local bg = _Ins("BodyGyro")
             bg.maxTorque = _VTR(math.huge, math.huge, math.huge)
-            bg.cframe = obj.CFrame * _CF(0, math.rad(45), 0)  -- поворот на 45 градусов, будет обновляться
+            bg.cframe = obj.CFrame * _CF(0, math.rad(45), 0)
             bg.P = 5000
             bg.D = 1000
             bg.Parent = obj
@@ -229,23 +211,23 @@ local function toggleSpinAll()
     end
 end
 
--- Поднять все объекты (кратковременный импульс вверх)
+-- Поднять все объекты (импульс вверх)
 local function liftAll()
     for obj, data in pairs(heldObjects) do
         local bv = _Ins("BodyVelocity")
         bv.maxForce = _VTR(0, math.huge, 0)
         bv.velocity = _VTR(0, 50, 0)
         bv.Parent = obj
-        game:GetService("Debris"):AddItem(bv, 0.5)
+        Debris:AddItem(bv, 0.5)
     end
 end
 
--- Бросок всех объектов вперёд (увеличиваем смещение Z)
+-- Бросок (отодвинуть на 90 единиц вперёд)
 local function throwAll()
     moveAllObjects(_VTR(0, 0, 90))
 end
 
--- Движение по направлениям (кнопки)
+-- Кнопочные функции движения
 local function moveUp()    moveAllObjects(_VTR(0, 1, 0)) end
 local function moveDown()  moveAllObjects(_VTR(0, -1, 0)) end
 local function moveLeft()  moveAllObjects(_VTR(-1, 0, 0)) end
@@ -312,12 +294,22 @@ local function createButton(text, callback, order)
     return btn
 end
 
--- Кнопки
+-- Создание кнопок
 createButton("Захватить", function()
     local cam = Workspace.CurrentCamera
-    local ray = Ray.new(cam.CFrame.p, cam.CFrame.LookVector * 100)
-    local hit = Workspace:FindPartOnRay(ray, LocalPlayer.Character)
-    if hit then grabObject(hit) end
+    if not cam then return end
+    local origin = cam.CFrame.p
+    local direction = cam.CFrame.LookVector * 100
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    local result = Workspace:Raycast(origin, direction, raycastParams)
+    if result then
+        local hit = result.Instance
+        if hit and not hit.Anchored then
+            grabObject(hit)
+        end
+    end
 end, 1)
 
 createButton("Отпустить все", releaseAll, 2)
@@ -334,7 +326,7 @@ createButton("Вращать", toggleSpinAll, 12)
 createButton("Поднять", liftAll, 13)
 createButton("Бросок", throwAll, 14)
 
--- Обработка клика мыши для захвата
+-- Обработка клика мыши по объекту (альтернативный способ захвата)
 local function onMouseClick(target)
     if target and not target.Anchored then
         grabObject(target)
@@ -369,6 +361,6 @@ RunService.RenderStepped:Connect(updateAllObjects)
 -- Очистка при респавне
 LocalPlayer.CharacterAdded:Connect(function()
     releaseAll()
-    wait(0.1)
-    -- Можно пересоздать SelectionBox для нового персонажа, но он не нужен, т.к. они создаются для объектов
 end)
+
+print("Telekinesis V6 loaded successfully!")
